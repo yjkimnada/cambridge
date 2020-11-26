@@ -19,34 +19,46 @@ class gumbel_NS_shGLM(nn.Module):
         self.T_hist = T_hist
         
         ### Synapse Parameters ###
-        self.W_s_syn = nn.Parameter(torch.randn(self.sub_no, self.syn_basis_no, 2) * 0.1, requires_grad=True)
-        self.W_ns_syn =  nn.Parameter(torch.randn(self.sub_no, self.syn_basis_no, 2) * 0.1, requires_grad=True)
-        self.Tau_s_syn = nn.Parameter(torch.arange(self.syn_basis_no).float().reshape(-1,1).repeat(1,2) , requires_grad=True)
-        self.Tau_ns_syn = nn.Parameter(torch.arange(self.syn_basis_no).float().reshape(-1,1).repeat(1,2) , requires_grad=True)
-        self.Delta_s_syn = nn.Parameter(torch.rand(self.sub_no, 2), requires_grad=True)
-        self.Delta_ns_syn = nn.Parameter(torch.rand(self.sub_no, 2), requires_grad=True)
+        #self.W_s_syn = nn.Parameter(torch.randn(self.sub_no, self.syn_basis_no, 2) * 0.1, requires_grad=True)
+        #self.W_ns_syn =  nn.Parameter(torch.randn(self.sub_no, self.syn_basis_no, 2) * 0.1, requires_grad=True)
+        #self.Tau_s_syn = nn.Parameter(torch.arange(self.syn_basis_no).float().reshape(-1,1).repeat(1,2) , requires_grad=True)
+        #self.Tau_ns_syn = nn.Parameter(torch.arange(self.syn_basis_no).float().reshape(-1,1).repeat(1,2) , requires_grad=True)
+        #self.Delta_s_syn = nn.Parameter(torch.rand(self.sub_no, 2), requires_grad=True)
+        #self.Delta_ns_syn = nn.Parameter(torch.rand(self.sub_no, 2), requires_grad=True)
+        
+        self.s_e_kern = nn.Parameter(torch.randn(self.sub_no,  self.T_syn), requires_grad=True)
+        self.s_i_kern = nn.Parameter(torch.randn(self.sub_no,  self.T_syn), requires_grad=True)
+        #self.ns_e_kern = nn.Parameter(torch.randn(self.sub_no, self.T_syn), requires_grad=True)
+        #self.ns_i_kern = nn.Parameter(torch.randn(self.sub_no,  self.T_syn), requires_grad=True)
 
         ### Ancestor Subunit Parameters ###
         self.W_s_s_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
-        self.W_s_ns_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
-        self.W_ns_s_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
-        self.W_ns_ns_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
+        #self.W_s_ns_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
+        #self.W_ns_s_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
+        #self.W_ns_ns_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
 
         ### Subunit Output Parameters ###
         self.V_o = nn.Parameter(torch.randn(1), requires_grad=True)
         self.Theta_s = nn.Parameter(torch.zeros(self.sub_no), requires_grad=True)
-        self.Theta_ns = nn.Parameter(torch.zeros(self.sub_no), requires_grad=True)
+        #self.Theta_ns = nn.Parameter(torch.zeros(self.sub_no), requires_grad=True)
+        
+        self.conv_e = nn.Conv1d(in_channels=self.sub_no, out_channels=self.sub_no,
+                               kernel_size=self.T_syn, groups=self.sub_no)
+        self.conv_i = nn.Conv1d(in_channels=self.sub_no, out_channels=self.sub_no,
+                               kernel_size=self.T_syn, groups=self.sub_no)
 
     def forward(self, S_e, S_i):
         T_data = S_e.shape[0]
+        #print(T_data)
 
         ############
         # Pre-convolve synapse inputs
         #############
-        syn_s_in = torch.zeros(T_data, self.sub_no).cuda()
-        syn_ns_in = torch.zeros(T_data, self.sub_no).cuda()
-
+        #syn_s_in = torch.zeros(T_data, self.sub_no).cuda()
+        #syn_ns_in = torch.zeros(T_data, self.sub_no).cuda()
+        """
         for s in range(self.sub_no):
+            
             t_raw = torch.arange(self.T_syn).cuda()
 
             delta_s_e = torch.exp(self.Delta_s_syn[s,0])
@@ -107,22 +119,38 @@ class gumbel_NS_shGLM(nn.Module):
             full_s_i_kern = full_s_i_kern.reshape(1,1,-1)
             full_ns_e_kern = full_ns_e_kern.reshape(1,1,-1)
             full_ns_i_kern = full_ns_i_kern.reshape(1,1,-1)
+            
+            
+            full_s_e_kern = self.s_e_kern[s].reshape(1,1,-1)
+            full_s_i_kern = self.s_i_kern[s].reshape(1,1,-1)
+            #full_ns_e_kern = self.ns_e_kern[s].reshape(1,1,-1)
+            #full_ns_i_kern = self.ns_i_kern[s].reshape(1,1,-1)
+            
+            in_e = torch.matmul(S_e, self.C_syn_e.T[:,s])
+            in_i = torch.matmul(S_i, self.C_syn_i.T[:,s])
+            pad_in_e = torch.zeros(T_data + self.T_syn - 1).cuda()
+            pad_in_i = torch.zeros(T_data + self.T_syn - 1).cuda()
+            pad_in_e[-T_data:] = pad_in_e[-T_data:] + in_e
+            pad_in_i[-T_data:] = pad_in_i[-T_data:] + in_i
+            pad_in_e = pad_in_e.reshape(1,1,-1)
+            pad_in_i = pad_in_i.reshape(1,1,-1)
 
             filtered_s_e = F.conv1d(pad_in_e, full_s_e_kern, padding=0).squeeze(1).T
             filtered_s_i = F.conv1d(pad_in_i, full_s_i_kern, padding=0).squeeze(1).T
-            filtered_ns_e = F.conv1d(pad_in_e, full_ns_e_kern, padding=0).squeeze(1).T
-            filtered_ns_i = F.conv1d(pad_in_i, full_ns_i_kern, padding=0).squeeze(1).T
+            #filtered_ns_e = F.conv1d(pad_in_e, full_ns_e_kern, padding=0).squeeze(1).T
+            #filtered_ns_i = F.conv1d(pad_in_i, full_ns_i_kern, padding=0).squeeze(1).T
 
             syn_s_in[:,s] = syn_s_in[:,s] + filtered_s_e.flatten() + filtered_s_i.flatten()
-            syn_ns_in[:,s] = syn_ns_in[:,s] + filtered_ns_e.flatten() + filtered_ns_i.flatten()
-        
+            #syn_ns_in[:,s] = syn_ns_in[:,s] + filtered_ns_e.flatten() + filtered_ns_i.flatten()
+        """
         #############
         # Solve for X_t, Y_t, Z_t through time
         ###########
 
-        Y_s_pad = torch.zeros(T_data+1, self.sub_no).cuda() ### NONscaled ancestor subunit inputs to spiking subunit
-        Y_ns_pad = torch.zeros(T_data+1, self.sub_no).cuda() ### NONScaled ancestor subunit inputs to non-spiking subunit
+        #Y_s_pad = torch.zeros(T_data+1, self.sub_no).cuda() ### NONscaled ancestor subunit inputs to spiking subunit
+        #Y_ns_pad = torch.zeros(T_data+1, self.sub_no).cuda() ### NONScaled ancestor subunit inputs to non-spiking subunit
 
+        """
         for t in range(T_data):
             Y_s_slice = Y_s_pad[t].clone()
             Y_ns_slice = Y_ns_pad[t].clone()
@@ -137,11 +165,28 @@ class gumbel_NS_shGLM(nn.Module):
             
             Y_s_pad[t+1] =  Y_s_slice_out
             Y_ns_pad[t+1] =  Y_ns_slice_out
-
-        final_voltage = Y_ns_pad[1:,0]*self.W_ns_ns_sub[0] + Y_s_pad[1:,0]*self.W_s_s_sub[0] + self.V_o
-        final_Y_ns = Y_ns_pad[1:,1:]
-        final_Y_s = Y_s_pad[1:,:]
+        """
         
-        return final_voltage, final_Y_ns, final_Y_s
+        syn_e = torch.matmul(S_e, self.C_syn_e.T)
+        syn_i = torch.matmul(S_i, self.C_syn_i.T)
+        syn_e_pad = torch.vstack((torch.zeros( self.T_syn - 1, self.sub_no).cuda() , syn_e))
+        syn_i_pad = torch.vstack((torch.zeros( self.T_syn - 1, self.sub_no).cuda() , syn_i))
+        syn_e_in = self.conv_e(syn_e_pad.T.reshape(1,self.sub_no,-1))
+        syn_i_in = self.conv_i(syn_i_pad.T.reshape(1,self.sub_no,-1))
+        #syn_e_in = F.conv1d(syn_e_pad.T.reshape(1,self.sub_no,-1), self.s_e_kern.reshape(1,))
+        
+        syn_in = syn_e_in[0].T + syn_i_in[0].T
+        
+        Y_s_pad = syn_in + torch.matmul(syn_in * torch.exp(self.W_s_s_sub), self.C_den.T)
+        #Y_ns_pad = syn_s_in + torch.matmul(syn_ns_in * self.W_s_ns_sub, self.C_den.T) + torch.matmul(syn_ns_in*self.W_ns_ns_sub, self.C_den.T)
+        
+        #final_voltage = Y_ns_pad[:,0]*self.W_ns_ns_sub[0] + Y_s_pad[:,0]*self.W_s_s_sub[0] + self.V_o
+        final_voltage = Y_s_pad[:,0]*torch.exp(self.W_s_s_sub[0])
+        #final_Y_ns = Y_ns_pad[:,1:]
+        final_Y_s = Y_s_pad[:,:]
+        #print(Y_s_pad.shape)
+        #print(Y_ns_pad.shape)
+        
+        return final_voltage, final_Y_s, final_Y_s
 
             
