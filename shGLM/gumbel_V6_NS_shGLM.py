@@ -27,8 +27,8 @@ class gumbel_NS_shGLM(nn.Module):
         #self.W_hist = nn.Parameter(torch.randn(self.sub_no, self.hist_basis_no) * 0.1, requires_grad=True)
         #self.Tau_hist = nn.Parameter(torch.arange(self.hist_basis_no).float() , requires_grad=True)
         #self.Delta_hist = nn.Parameter(torch.rand(self.sub_no), requires_grad=True)
-        self.hist_bases = nn.Parameter(torch.randn(2, self.T_hist)*0.1 , requires_grad=True)
-        self.hist_weights = nn.Parameter(torch.randn(self.sub_no, 2)*0.1 , requires_grad=True)
+        self.hist_bases = nn.Parameter(torch.randn(3, self.T_hist)*0.1 , requires_grad=True)
+        self.hist_weights = nn.Parameter(torch.randn(self.sub_no, 3)*0.1 , requires_grad=True)
 
         ### Ancestor Subunit Parameters ###
         self.W_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
