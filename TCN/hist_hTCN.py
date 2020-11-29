@@ -96,15 +96,17 @@ class hist_hTCN(nn.Module):
             sub_hist_in = F.conv1d(sub_hist_out, hist_kern, groups=self.sub_no).reshape(self.sub_no, self.M_no)######
             
             ### Leaf
-            leaf_in = sub_out[t+self.T_no - 1,:].clone() #(sub_no)
-            leaf_scale = leaf_in * self.leaf_linear.T # (M_no , sub_no)
-            leaf_in = leaf_scale.T
+            leaf_out = sub_out[t+self.T_no - 1,:].clone() #(sub_no)
+            leaf_scale = leaf_out * self.leaf_linear.T # (M_no , sub_no)
+            leaf_in_pre = leaf_scale.T # (sub_no, M_no)
+            leaf_in = torch.matmul(self.C_den , leaf_in_pre) #(sub_no, M_no)
             
             ### Syn
             syn_in = S_conv[t,:,:] # (sub_no, M_no)
             
             ### Combine
             nonlin_out = self.nonlin(syn_in + leaf_in + sub_hist_in) # (sub_no , M_no)
+            #nonlin_out = self.nonlin(syn_in + leaf_in) # (sub_no , M_no)
             plex_out = nonlin_out * self.multiplex_linear 
             plex_out = torch.sum(plex_out , 1) + self.multiplex_bias
             sub_out[t+self.T_no] = sub_out[t+self.T_no] + plex_out

@@ -24,9 +24,11 @@ class gumbel_NS_shGLM(nn.Module):
         self.Delta_syn = nn.Parameter(torch.rand(self.sub_no, 2), requires_grad=True)
         
         ### HIstory Parameters ###
-        self.W_hist = nn.Parameter(torch.randn(self.sub_no, self.hist_basis_no) * 0.1, requires_grad=True)
-        self.Tau_hist = nn.Parameter(torch.arange(self.hist_basis_no).float() , requires_grad=True)
-        self.Delta_hist = nn.Parameter(torch.rand(self.sub_no), requires_grad=True)
+        #self.W_hist = nn.Parameter(torch.randn(self.sub_no, self.hist_basis_no) * 0.1, requires_grad=True)
+        #self.Tau_hist = nn.Parameter(torch.arange(self.hist_basis_no).float() , requires_grad=True)
+        #self.Delta_hist = nn.Parameter(torch.rand(self.sub_no), requires_grad=True)
+        self.hist_bases = nn.Parameter(torch.randn(2, self.T_hist)*0.1 , requires_grad=True)
+        self.hist_weights = nn.Parameter(torch.randn(self.sub_no, 2)*0.1 , requires_grad=True)
 
         ### Ancestor Subunit Parameters ###
         self.W_sub = nn.Parameter(torch.rand(self.sub_no) , requires_grad=True)
@@ -97,6 +99,7 @@ class gumbel_NS_shGLM(nn.Module):
 
         Y_pad = torch.zeros(T_data+self.T_hist, self.sub_no).cuda() ### NONscaled ancestor subunit inputs to spiking subunit
         
+        """
         hist_kern = torch.zeros(self.sub_no, self.T_hist).cuda()
         for s in range(self.sub_no):
             t = torch.arange(self.T_hist).cuda()
@@ -107,7 +110,9 @@ class gumbel_NS_shGLM(nn.Module):
                 t_tau = t / tau
                 hist_kern[s,:] = hist_kern[s,:] + t_tau*torch.exp(-t_tau) * self.W_hist[s,b]
         hist_kern = torch.flip(hist_kern,[1]).reshape(self.sub_no, 1, -1) 
+        """
         
+        hist_kern = torch.matmul(self.hist_weights, self.hist_bases).unsqueeze(1)
         
         for t in range(T_data):
             sub_hist = Y_pad[t:t+self.T_hist,:].clone() #(T_hist, sub_no)

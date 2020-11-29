@@ -97,13 +97,39 @@ class gumbel_NS_shGLM(nn.Module):
 
         Y_pad = torch.zeros(T_data+1, self.sub_no).cuda() ### NONscaled ancestor subunit inputs to spiking subunit
         
+        """
         for t in range(T_data):
             
             sub_prop = torch.matmul(Y_pad[t].clone()*self.W_sub , self.C_den.T)
             Y_out = torch.tanh(syn_in[t] + sub_prop + self.Theta)
             Y_pad[t+1] = Y_pad[t+1] + Y_out
+        """
+        
+        
+        
+        
+        #### Combine convolved spike trains ####
+        sub_out = torch.zeros(T_data, self.sub_no).cuda()
+        
+        for s in range(self.sub_no):
+            sub_idx = -s-1
+            leaf_idx = torch.where(self.C_den[sub_idx] == 1)[0]
 
-        final_voltage = Y_pad[1:,0]*self.W_sub[0] + self.V_o
+            if torch.numel(leaf_idx) == 0:
+                nonlin_out = torch.tanh(syn_in[:,sub_idx]) # (T_data,) 
+                sub_out[:,sub_idx] = sub_out[:,sub_idx] + nonlin_out
+            else:
+
+                
+                leaf_in = sub_out[:,leaf_idx] * self.W_sub[leaf_idx] # (T_data,)
+                nonlin_in = syn_in[:,sub_idx] + torch.sum(leaf_in, 1) # (T_data,)
+                nonlin_out = torch.tanh(nonlin_in)
+                sub_out[:,sub_idx] = sub_out[:,sub_idx] + nonlin_out
+        
+        final_voltage = sub_out[:,0]*self.W_sub[0] + self.V_o
+        
+        
+        #final_voltage = Y_pad[1:,0] * self.W_sub[0] + self.V_o
         
         return final_voltage
             
