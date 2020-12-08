@@ -1,8 +1,59 @@
-
-  
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+def H(x):
+    # x is shape (sub_no, syn_no):
+    out = torch.zeros_like(x).cuda()
+    
+    for s in range(x.shape[1]):
+        max_idx = torch.argmax(x[:,s])
+        out[max_idx,s] = 1
+        
+    return out
+        
+
+def reparam_pz(u, theta):
+    z = torch.log(theta) - torch.log(-torch.log(u))
+    return z
+
+
+def reparam_pz_b(v, b, theta):
+    #z_squiggle = torch.zeros_like(v).cuda()
+    
+    same_idx = torch.where(b == 1)
+    diff_ones = torch.ones_like(v).cuda()
+    same_ones = torch.zeros_like(v).cuda()
+    diff_ones[same_idx[0], same_idx[1]] = 0
+    same_ones[same_idx[0], same_idx[1]] = 1
+    
+    z_diff_raw = -torch.log(v)/theta
+    z_diff_subtract = torch.log(v[same_idx[0], same_idx[1]]).reshape(1,-1)
+    z_diff_raw = z_diff_raw - z_diff_subtract
+    z_diff = diff_ones * -torch.log(z_diff_raw)
+    
+    z_same = same_ones * -torch.log(-torch.log(v))
+    
+    z_squiggle = z_same + z_diff
+    
+    
+    
+    
+    for s in range(v.shape[1]):
+        k_idx = torch.where(b[:,s] == 1)[0]
+        v_k = v[k_idx,s]
+        
+        for k in range(v.shape[0]):
+            if k == k_idx:
+                z_squiggle[k,s] = -torch.log(-torch.log(v_k))
+            else:
+                z_squiggle[k,s] = -torch.log(-torch.log(v[k,s])/theta[k,s] - torch.log(v_k))
+                
+    return z_squiggle
+
+
+
+
 
 class Greedy_Base_hGLM(nn.Module):
     def __init__(self, C_den, E_no, I_no, T_no):
@@ -27,38 +78,16 @@ class Greedy_Base_hGLM(nn.Module):
         self.Theta = nn.Parameter(torch.zeros(self.sub_no), requires_grad=True)
 
         ### C_syn Parameters ###
-        self.C_syn_e_logit = nn.Parameter(torch.ones(self.sub_no, self.E_no), requires_grad=True)
-        self.C_syn_i_logit = nn.Parameter(torch.ones(self.sub_no, self.I_no), requires_grad=True)
+        #self.C_syn_e_log = nn.Parameter(torch.ones(self.sub_no, self.E_no), requires_grad=True)
+        #self.C_syn_i_log = nn.Parameter(torch.ones(self.sub_no, self.I_no), requires_grad=True)
+        self.C_syn_log = nn.Parameter(torch.ones(self.sub_no, self.E_no + self.I_no), requires_grad=True)
 
-    def forward(self, S_e, S_i, temp, test):
-        T_data = S_e.shape[0] 
-
-        ### Construct C_syn_e, C_syn_i
-
+    def evaluate_f(self, C_syn, S_e, S_i):
+        T_data = S_e.shape[0]
         
+        C_syn_e = C_syn[:,:self.E_no].clone()
+        C_syn_i = C_syn[:,-self.I_no:].clone()
         
-        if test == True:
-            C_syn_e = torch.zeros_like(self.C_syn_e_logit).cuda()
-            C_syn_i = torch.zeros_like(self.C_syn_i_logit).cuda()
-            for i in range(C_syn_e.shape[1]):
-                idx = torch.argmax(self.C_syn_e_logit[:,i])
-                C_syn_e[idx,i] = 1
-            for i in range(C_syn_i.shape[1]):
-                idx = torch.argmax(self.C_syn_i_logit[:,i])
-                C_syn_i[idx,i] = 1
-        
-        elif test == False:
-            u_e = torch.rand_like(self.C_syn_e_logit).cuda()
-            u_i = torch.rand_like(self.C_syn_i_logit).cuda()
-            eps = 1e-8
-            g_e = -torch.log(- torch.log(u_e + eps) + eps)
-            g_i = -torch.log(- torch.log(u_i + eps) + eps)
-            raw_C_syn_e = F.softmax((self.C_syn_e_logit + g_e) / temp, dim=0)
-            raw_C_syn_i = F.softmax((self.C_syn_i_logit + g_i) / temp, dim=0)
-            
-            C_syn_e = raw_C_syn_e
-            C_syn_i = raw_C_syn_i
-
         ### Pre-convolve synapse inputs
         syn_in = torch.zeros(T_data, self.sub_no).cuda()
         
@@ -118,4 +147,35 @@ class Greedy_Base_hGLM(nn.Module):
         final_voltage = sub_out[:,0]*self.W_sub[0] + self.V_o
 
         return final_voltage
+        
+    
+    def forward(self, S_e, S_i):
+        
+        
+        ### Sample random uniform U, V ###
+        u = torch.rand(self.sub_no, self.E_no+self.I_no).cuda()
+        v = torch.rand(self.sub_no, self.E_no+self.I_no).cuda()
+        
+        ### Construct C_syn_e, C_syn_i
+        C_syn_theta = F.softmax(self.C_syn_log, 0)
+        
+        rebar_z = reparam_pz(u, C_syn_theta)
+        hard_z = H(rebar_z) ## Discrete C_syn
+        rebar_zb = reparam_pz_b(v, hard_z, C_syn_theta)
+        soft_z = torch.sigmoid(rebar_z/0.5) + 1e-9 ## Soft C_syn
+        soft_zb = torch.sigmoid(rebar_zb/0.5)+ 1e-9
+        
+        ### Evaluate f ###
+        V_hard_z = self.evaluate_f(hard_z, S_e, S_i)
+        V_soft_z = self.evaluate_f(soft_z, S_e, S_i)
+        V_soft_zb = self.evaluate_f(soft_zb, S_e, S_i)
+
+        return V_hard_z, V_soft_z, V_soft_zb, C_syn_theta, hard_z, soft_z, soft_zb
+        
+        
+        
+        
+    
+
+        
 

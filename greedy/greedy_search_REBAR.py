@@ -3,11 +3,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from greedy_base_hGLM import Greedy_Base_hGLM
+from greedy_base_hGLM_REBAR import Greedy_Base_hGLM
 from sklearn import metrics
 from tqdm import tqdm,tnrange
+from torch.autograd import grad
 
 
+def log_likelihood(y_sample, y_true):
+    # y is shape (sub_no, syn_no)
+    raw = y_sample * torch.log(y_true)
+    
+    return torch.sum(raw, 0)
 
 class Greedy_Search:
     def __init__(self, V_ref, train_T, test_T, T_no, E_neural, I_neural,
@@ -34,6 +40,9 @@ class Greedy_Search:
 
         self.E_no = E_neural.shape[1]
         self.I_no = I_neural.shape[1]
+        
+        self.rebar_eta_zb = 0.1
+        self.rebar_eta_z = 0.1
 
     def make_C_den(self, raw):
         sub_no = raw.shape[0] + 1
@@ -62,32 +71,32 @@ class Greedy_Search:
         model = Greedy_Base_hGLM(C_den.cuda(), self.E_no, self.I_no, self.T_no)
         model = model.float().cuda()
         
-        optimizer = optim.Adam(model.parameters(), lr=0.004)
+        optimizer = optim.Adam(model.parameters(), lr=0.005)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5000, gamma=0.5)
-        
-        temp = 0.5
-        temp_list = [0.5, 0.45,0.4,0.35,0.3,0.25,0.2,0.15,0.1,0.05,0.04,0.03,0.02,0.01]
         
         for i in tnrange(self.batch_no):
             model.train()
             optimizer.zero_grad()
-            
-            temp_count = 0
-            if i%100 == 999 and temp_count < 13:
-                temp = temp_list[temp_count + 1]
 
             batch_idx = train_idx[i].long()
             batch_S_E = self.train_S_E[batch_idx : batch_idx+self.batch_size].float().cuda()
             batch_S_I = self.train_S_I[batch_idx : batch_idx+self.batch_size].float().cuda()
-            V_soft = model(batch_S_E, batch_S_I, temp, test=False)
-            batch_ref = self.train_V_ref[batch_idx:batch_idx+self.batch_size].cuda()
-                
-            #hard_loss = torch.var(batch_ref - V_hard)
-            soft_loss = torch.var(batch_ref - V_soft)
+            
+            V_hard_z, V_soft_z, V_soft_zb, C_syn_theta, hard_z, soft_z, soft_zb = model(batch_S_E, batch_S_I)
+            batch_ref = self.train_V_ref[batch_idx:batch_idx+self.batch_size].cuda()\
+            
+            loss_hard_z = torch.var(batch_ref - V_hard_z)
+            loss_soft_z = torch.var(batch_ref - V_soft_z)
+            loss_soft_zb = torch.var(batch_ref - V_soft_zb)
+            
+            grad_logP = grad(log_likelihood(hard_z, C_syn_theta).split(1), C_syn_theta, retain_graph=True)[0]
+            grad_sc_z = grad(loss_soft_z, C_syn_theta, retain_graph=True)[0]
+            grad_sc_zb = grad(loss_soft_zb, C_syn_theta)[0]
+            
+            rebar_grad_est = (loss_hard_z - self.rebar_eta_zb*loss_soft_zb) * grad_logP + self.rebar_eta_zb*grad_sc_z - self.rebar_eta_zb*grad_sc_zb
 
-            soft_loss.backward()
-            
-            
+            loss_hard_z.backward()
+            model.C_syn_log.grad = rebar_grad_est
             optimizer.step()
             scheduler.step()
 
@@ -97,14 +106,22 @@ class Greedy_Search:
             if (i%50 == 49) & (i >= self.batch_no - 20*50):
                 model.eval()
                 count += 1
-                test_V_hard = model(self.test_S_E, self.test_S_I, temp, test=True)
+                V_hard_z, V_soft_z, V_soft_zb, C_syn_theta, hard_z, soft_z, soft_zb = model(self.test_S_E, self.test_S_I)
                 test_score = metrics.explained_variance_score(y_true=self.test_V_ref.cpu().detach().numpy(),
-                                                      y_pred=test_V_hard.cpu().detach().numpy(),
+                                                      y_pred=V_hard_z.cpu().detach().numpy(),
                                                       multioutput='uniform_average')
                 avg_var_exp += test_score
+                
+            if i%50 == 0:
+                model.eval()
+                V_hard_z, V_soft_z, V_soft_zb, C_syn_theta, hard_z, soft_z, soft_zb = model(self.test_S_E, self.test_S_I)
+                test_score = metrics.explained_variance_score(y_true=self.test_V_ref.cpu().detach().numpy(),
+                                                      y_pred=V_hard_z.cpu().detach().numpy(),
+                                                      multioutput='uniform_average')
+                print(i, test_score)
 
             if i == self.batch_no-1:
-                torch.save(model.state_dict(), "/media/hdd01/sklee/greedy/greedybaseGLM_"+self.cell_type+"_sub"+str(sub_no)+"-"+str(change_idx.item())+".pt")
+                torch.save(model.state_dict(), "/media/hdd01/sklee/greedy/greedybaseGLM_REBAR_"+self.cell_type+"_sub"+str(sub_no)+"-"+str(change_idx.item())+".pt")
 
         avg_var_exp /= count
         return avg_var_exp
