@@ -6,12 +6,13 @@ import torch.nn.functional as F
 from greedy_base_hGLM import Greedy_Base_hGLM
 from sklearn import metrics
 from tqdm import tqdm,tnrange
+import os
 
 
 
 class Greedy_Search:
     def __init__(self, V_ref, train_T, test_T, T_no, E_neural, I_neural,
-                batch_size, batch_no, max_sub, cell_type):
+                batch_size, batch_no, max_sub, cell_type, clust_no):
 
         self.train_T = train_T
         self.test_T = test_T
@@ -20,6 +21,8 @@ class Greedy_Search:
         self.max_sub = max_sub
         self.cell_type = cell_type
         self.batch_no = batch_no
+        self.clust_no = clust_no
+        self.clust_id = "clust"+str(self.clust_no)
 
         self.E_no = E_neural.shape[1]
         self.I_no = I_neural.shape[1]
@@ -65,16 +68,16 @@ class Greedy_Search:
         optimizer = optim.Adam(model.parameters(), lr=0.004)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5000, gamma=0.5)
         
-        temp = 0.5
         temp_list = [0.5, 0.45,0.4,0.35,0.3,0.25,0.2,0.15,0.1,0.05,0.04,0.03,0.02,0.01]
-        
+        temp_count = 0
         for i in tnrange(self.batch_no):
             model.train()
             optimizer.zero_grad()
             
-            temp_count = 0
-            if i%100 == 999 and temp_count < 13:
-                temp = temp_list[temp_count + 1]
+            
+            if i%1000 == 0 and temp_count < 14:
+                temp = temp_list[temp_count]
+                temp_count += 1
 
             batch_idx = train_idx[i].long()
             batch_S_E = self.train_S_E[batch_idx : batch_idx+self.batch_size].float().cuda()
@@ -104,7 +107,7 @@ class Greedy_Search:
                 avg_var_exp += test_score
 
             if i == self.batch_no-1:
-                torch.save(model.state_dict(), "/media/hdd01/sklee/greedy/greedybaseGLM_"+self.cell_type+"_sub"+str(sub_no)+"-"+str(change_idx.item())+".pt")
+                torch.save(model.state_dict(), "/media/hdd01/sklee/greedy/"+self.clust_id+"/greedybaseGLM_"+self.cell_type+"_sub"+str(sub_no)+"-"+str(change_idx.item())+".pt")
 
         avg_var_exp /= count
         return avg_var_exp
@@ -118,6 +121,7 @@ class Greedy_Search:
                 C_den = self.make_C_den(C_den_raw)
                 avg_var_exp = self.train(C_den)
                 best_score[i] = avg_var_exp
+                np.save("/media/hdd01/sklee/greedy/"+self.clust_id+"/CDen_"+self.cell_type+"_sub"+str(C_den.shape[0])+".npy", C_den_raw.cpu().detach().numpy())
 
             else:
                 var_exp_list = torch.zeros(i+1)
@@ -138,6 +142,12 @@ class Greedy_Search:
                 chosen_C_den_raw[-1] = chosen_idx
                 C_den_raw = chosen_C_den_raw.long()
                 best_score[i] = var_exp_list[chosen_idx]
+                np.save("/media/hdd01/sklee/greedy/"+self.clust_id+"/CDen_"+self.cell_type+"_sub"+str(C_den_raw.shape[0]+1)+".npy", C_den_raw.cpu().detach().numpy())
+                
+                for j in range(i+1):
+                    if j != chosen_idx.item():
+                        os.remove("/media/hdd01/sklee/greedy/"+self.clust_id+"/greedybaseGLM_"+self.cell_type+"_sub"+str(C_den_raw.shape[0]+1)+"-"+str(j)+".pt")
+                
                 print("Sub"+str(i+2)+"_scores", var_exp_list)
 
             print("FINAL C_DEN_RAW", C_den_raw)
